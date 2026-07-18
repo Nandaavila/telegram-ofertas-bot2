@@ -58,10 +58,10 @@ CATEGORIAS_ATIVAS = {
 # Seus links de afiliado por marketplace (o "tag"/"id" que você recebe
 # ao se cadastrar em cada programa de afiliados).
 AFFILIATE_TAGS = {
-    "mercadolivre": os.getenv("ML_AFFILIATE_TAG", ""),
-    "amazon": os.getenv("AMAZON_AFFILIATE_TAG", ""),
+    #"mercadolivre": os.getenv("ML_AFFILIATE_TAG", ""),
+    #"amazon": os.getenv("AMAZON_AFFILIATE_TAG", ""),
     "shopee": os.getenv("SHOPEE_AFFILIATE_TAG", ""),
-    "magalu": os.getenv("MAGALU_AFFILIATE_TAG", ""),
+    #"magalu": os.getenv("MAGALU_AFFILIATE_TAG", ""),
 }
 
 # Credenciais da Shopee Affiliate Open API (App ID + Secret, obtidos no
@@ -149,7 +149,7 @@ COLUNAS_RELATORIO_ML = {
 # AGENDAMENTO
 # ---------------------------------------------------------------------
 # Horários em que o robô vai buscar e publicar ofertas (formato 24h).
-HORARIOS_PUBLICACAO = ["09:00", "12:30", "16:00", "19:30", "21:30"]
+HORARIOS_PUBLICACAO = ["06:30", "09:00", "12:30", "16:00", "19:30", "21:00", "21:30"]
 
 # Intervalo (em minutos) entre a busca de novas ofertas nos marketplaces
 INTERVALO_BUSCA_MINUTOS = 60
