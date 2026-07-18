@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <title>Painel - Canal de Ofertas</title>
+    <style>
+        body { font-family: -apple-system, Arial, sans-serif; background: #f4f5f7; margin: 0; padding: 24px; }
+        h1 { color: #1a1a1a; }
+        .cards { display: flex; gap: 16px; margin-bottom: 32px; }
+        .card { background: white; border-radius: 10px; padding: 16px 24px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .card .numero { font-size: 28px; font-weight: bold; color: #ff5722; }
+        table { width: 100%; border-collapse: collapse; background: white; border-radius: 10px; overflow: hidden; }
+        th, td { padding: 10px 14px; text-align: left; border-bottom: 1px solid #eee; font-size: 14px; }
+        th { background: #fafafa; }
+        .btn { padding: 6px 12px; border: none; border-radius: 6px; cursor: pointer; color: white; font-size: 13px; }
+        .btn-aprovar { background: #2e7d32; }
+        .btn-rejeitar { background: #c62828; margin-left: 6px; }
+        section { margin-bottom: 40px; }
+        .log { font-family: monospace; font-size: 12px; color: #555; }
+        .flash { padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
+        .flash-sucesso { background: #e6f4ea; color: #1e4620; }
+        .flash-erro { background: #fdecea; color: #611a15; }
+        .upload-box { background: white; border-radius: 10px; padding: 20px; margin-bottom: 32px; }
+        .upload-box p { font-size: 13px; color: #666; margin-top: 0; }
+    </style>
+</head>
+<body>
+    <h1>📊 Painel — Canal de Ofertas</h1>
+
+    {% with mensagens = get_flashed_messages(with_categories=true) %}
+        {% for categoria, mensagem in mensagens %}
+            <div class="flash flash-{{ 'sucesso' if categoria == 'sucesso' else 'erro' }}">{{ mensagem }}</div>
+        {% endfor %}
+    {% endwith %}
+
+    <div class="upload-box">
+        <h3>📥 Importar relatório do Mercado Livre</h3>
+        <p>
+            O Mercado Livre não tem API pública de conversões (diferente da Shopee).
+            Exporte o CSV em <strong>mercadolivre.com.br/afiliados → Relatórios</strong>
+            e envie aqui para atualizar cliques/pedidos/comissão.
+        </p>
+        <form method="post" action="/importar-relatorio-ml" enctype="multipart/form-data">
+            <input type="file" name="arquivo_csv" accept=".csv" required>
+            <button class="btn btn-aprovar" type="submit">Importar CSV</button>
+        </form>
+    </div>
+
+    <div class="cards">
+        <div class="card"><div class="numero">{{ total_publicados }}</div>Ofertas publicadas</div>
+        <div class="card"><div class="numero">{{ total_cliques }}</div>Cliques (convertidos)</div>
+        <div class="card"><div class="numero">{{ total_pedidos }}</div>Pedidos gerados</div>
+        <div class="card"><div class="numero">R$ {{ "%.2f"|format(total_comissao) }}</div>Comissão estimada</div>
+        <div class="card"><div class="numero">{{ pendentes|length }}</div>Aguardando aprovação</div>
+        <div class="card"><div class="numero">{{ total_expirados }}</div>Ofertas expiradas</div>
+    </div>
+    <p style="font-size:12px;color:#888;margin-top:-16px;">
+        * "Cliques" reflete apenas cliques que geraram conversão (limitação da API de afiliados da Shopee — não há contagem de cliques brutos).
+    </p>
+
+    <section>
+        <h2>🕐 Pendentes de aprovação</h2>
+        <table>
+            <tr><th>Produto</th><th>Preço</th><th>Desconto</th><th>Ações</th></tr>
+            {% for p in pendentes %}
+            <tr>
+                <td>{{ p.titulo }}</td>
+                <td>R$ {{ "%.2f"|format(p.preco_atual) }}</td>
+                <td>{{ p.percentual_desconto }}%</td>
+                <td>
+                    <form style="display:inline" method="post" action="/aprovar/{{ p.id }}">
+                        <button class="btn btn-aprovar">Aprovar</button>
+                    </form>
+                    <form style="display:inline" method="post" action="/rejeitar/{{ p.id }}">
+                        <button class="btn btn-rejeitar">Rejeitar</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </table>
+    </section>
+
+    <section>
+        <h2>✅ Publicados recentemente</h2>
+        <table>
+            <tr><th>Produto</th><th>Desconto</th><th>Sub-ID (rastreio)</th><th>Publicado em</th></tr>
+            {% for p in publicados %}
+            <tr>
+                <td>{{ p.titulo }}</td>
+                <td>{{ p.percentual_desconto }}%</td>
+                <td>{{ sub_id_por_produto.get(p.id, "—") }}</td>
+                <td>{{ p.publicado_em }}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </section>
+
+    <section>
+        <h2>📝 Logs recentes</h2>
+        {% for log in logs %}
+            <div class="log">[{{ log.criado_em }}] {{ log.nivel }} — {{ log.origem }} — {{ log.mensagem }}</div>
+        {% endfor %}
+    </section>
+</body>
+</html>

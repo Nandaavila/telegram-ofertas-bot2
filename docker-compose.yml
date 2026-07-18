@@ -1,0 +1,24 @@
+version: "3.9"
+
+services:
+  automacao:
+    build: .
+    container_name: automacao_ofertas
+    env_file: .env
+    volumes:
+      - ./ofertas.db:/app/ofertas.db   # persiste o banco fora do container
+      - ./logs:/app/logs
+    restart: unless-stopped            # reinicia sozinho se cair
+
+  painel:
+    build: .
+    container_name: painel_admin
+    command: python admin/app.py
+    ports:
+      - "5000:5000"
+    env_file: .env
+    volumes:
+      - ./ofertas.db:/app/ofertas.db
+    restart: unless-stopped
+    depends_on:
+      - automacao

@@ -1,0 +1,24 @@
+# NUNCA suba o .env de verdade — só o .env.example (sem valores reais)
+.env
+
+# Ambiente virtual Python
+venv/
+__pycache__/
+*.pyc
+
+# Banco de dados local (cada ambiente tem o seu; não faz sentido versionar)
+*.db
+
+# Imagens geradas automaticamente (arquivos, não código)
+generated_images/*.png
+!generated_images/.gitkeep
+
+# Logs
+logs/
+*.log
+
+# Relatórios CSV importados (podem conter dados sensíveis de vendas)
+uploads_relatorios/
+
+# Arquivos de sistema
+.DS_Store
