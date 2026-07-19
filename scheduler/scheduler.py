@@ -12,7 +12,7 @@ Por que APScheduler e não apenas 'time.sleep()' em loop?
 """
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from datetime import timezone, timedelta
+from datetime import datetime, timezone, timedelta
 from apscheduler.triggers.cron import CronTrigger
 import config
 from scheduler.pipeline import tarefa_buscar_ofertas, tarefa_publicar_oferta
@@ -29,7 +29,7 @@ def iniciar_agendador() -> AsyncIOScheduler:
         trigger="interval",
         minutes=config.INTERVALO_BUSCA_MINUTOS,
         id="busca_ofertas",
-        next_run_time=None,  # deixa o próprio scheduler decidir o primeiro disparo
+        next_run_time=datetime.now()  # Altere aqui! Isso força a busca a rodar no segundo em que o bot ligar
     )
 
     # Tarefas de PUBLICAÇÃO: uma por horário configurado em HORARIOS_PUBLICACAO
