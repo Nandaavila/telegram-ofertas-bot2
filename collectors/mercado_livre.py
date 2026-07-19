@@ -1,148 +1,146 @@
 """
 collectors/mercado_livre.py
 ============================
-Coletor automático de ofertas do Mercado Livre via Extração de Dados do HTML (JSON parsing).
-Extrai informações estruturadas diretamente dos metadados da página, eliminando problemas de renderização dinâmica.
+Coletor 100% automático de ofertas do Mercado Livre via API Oficial de Highlights de Categorias.
+Busca promoções reais em tempo real sem travas de escopo ou erros 403.
 """
 
-import urllib.request
-import re
-import json
+import requests
+import os
 import logging
 from collectors.base_collector import BaseCollector
 import config
 
 logger = logging.getLogger(__name__)
 
-MAPA_URLS_OFERTAS = {
-    "casa": "https://www.mercadolivre.com.br/ofertas?category=MLB1574",
-    "eletronicos": "https://www.mercadolivre.com.br/ofertas?category=MLB1000",
-    "moda_feminina": "https://www.mercadolivre.com.br/ofertas?category=MLB1246",
-    "moda_masculina": "https://www.mercadolivre.com.br/ofertas?category=MLB1246",
-    "beleza": "https://www.mercadolivre.com.br/ofertas?category=MLB1248",
-    "informatica": "https://www.mercadolivre.com.br/ofertas?category=MLB1648",
+# Mapeamos as categorias para as IDs reais de navegação homologadas da API
+MAPA_CATEGORIAS = {
+    "casa": "MLB1574",          # Casa, Móveis e Decoração
+    "eletronicos": "MLB1000",    # Eletrônicos, Áudio e Vídeo
+    "moda_feminina": "MLB1246",  # Calçados, Roupas e Bolsas
+    "moda_masculina": "MLB1246", # Calçados, Roupas e Bolsas
+    "beleza": "MLB1248",        # Beleza e Cuidado Pessoal
+    "informatica": "MLB1648",    # Informática
 }
 
 class MercadoLivreCollector(BaseCollector):
     nome_marketplace = "mercadolivre"
 
     def __init__(self):
-        self.tag_afiliado = config.AFFILIATE_TAGS.get("mercadolivre", "")
+        # Endpoint oficial para obter os itens mais relevantes/promocionais de uma categoria específica
+        self.base_url = "https://api.mercadolibre.com/categories"
+        
+        # Lendo diretamente a variável conforme estruturada no seu config.py
+        self.tag_afiliado = config.ML_AFFILIATE_TAG
+        
+        self.client_id = os.getenv("MERCADOLIVRE_CLIENT_ID")
+        self.client_secret = os.getenv("MERCADOLIVRE_CLIENT_SECRET")
+        self.access_token = None
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
         }
 
-    def buscar_ofertas(self, categoria: str) -> list[dict]:
-        """Varre a página capturando os objetos estruturados via injeção JSON no HTML."""
-        url_alvo = MAPA_URLS_OFERTAS.get(categoria)
-        if not url_alvo:
-            logger.warning(f"[JSON-PARSER] Categoria '{categoria}' não mapeada. Pulando.")
-            return []
-
-        logger.info(f"[JSON-PARSER] Acessando dados estruturados para '{categoria}'...")
+    def _gerar_access_token(self):
+        """Gera um token válido usando o fluxo de Client Credentials."""
+        url = "https://api.mercadolibre.com/oauth/token"
+        payload = {
+            "grant_type": "client_credentials",
+            "client_id": self.client_id,
+            "client_secret": self.client_secret
+        }
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
         
         try:
-            req = urllib.request.Request(url_alvo, headers=self.headers)
-            with urllib.request.urlopen(req, timeout=15) as resposta:
-                html = resposta.read().decode('utf-8', errors='ignore')
+            resposta = requests.post(url, data=payload, headers=headers, timeout=10)
+            resposta.raise_for_status()
+            self.access_token = resposta.json().get("access_token")
+            logger.info("[OAUTH] Access Token gerado com sucesso.")
         except Exception as e:
-            logger.error(f"[JSON-PARSER] Erro de conexao ao acessar categoria {categoria}: {e}")
+            logger.error(f"[OAUTH] Erro crítico ao gerar Access Token: {e}")
+            self.access_token = None
+
+    def buscar_ofertas(self, categoria: str) -> list[dict]:
+        """Varre os destaques da categoria na API e filtra automaticamente itens com desconto real."""
+        id_categoria = MAPA_CATEGORIAS.get(categoria)
+        if not id_categoria:
+            logger.warning(f"[API-CATEGORIA] Categoria '{categoria}' não mapeada. Pulando.")
+            return []
+
+        if not self.access_token:
+            self._gerar_access_token()
+
+        if not self.access_token:
+            logger.error("[API-CATEGORIA] Abortando busca: Access Token ausente.")
+            return []
+
+        logger.info(f"[API-CATEGORIA] Coletando itens da categoria {categoria} ({id_categoria})...")
+        
+        # Chamada para o endpoint de highlights da categoria (aceita Client Credentials perfeitamente)
+        url_alvo = f"{self.base_url}/{id_categoria}/highlights"
+        
+        headers_autenticados = self.headers.copy()
+        headers_autenticados["Authorization"] = f"Bearer {self.access_token}"
+
+        try:
+            resposta = requests.get(url_alvo, headers=headers_autenticados, timeout=15)
+            resposta.raise_for_status()
+            dados = resposta.json()
+        except Exception as e:
+            logger.error(f"[API-CATEGORIA] Erro ao acessar endpoint da categoria {categoria}: {e}")
             return []
 
         ofertas = []
-
-        # Captura os blocos de dados estruturados JSON-LD que o ML insere para SEO e indexadores
-        json_ld_blocos = re.findall(r'<script[^>]*type="application/ld\+json"[^>]*>(.*?)</script>', html, re.DOTALL)
         
-        for bloco in json_ld_blocos:
+        # O retorno deste endpoint traz uma lista de dicionários dentro da chave 'content'
+        for elemento in dados.get("content", []):
             try:
-                dados = json.loads(bloco.strip())
+                # Filtragem preventiva para focar nos itens válidos
+                if elemento.get("type") != "item":
+                    continue
+                    
+                id_item = elemento.get("id")
                 
-                # O Mercado Livre organiza múltiplos itens dentro do tipo 'ItemList'
-                if isinstance(dados, dict) and dados.get("@type") == "ItemList":
-                    elementos = dados.get("itemListElement", [])
-                elif isinstance(dados, list):
-                    elementos = dados
-                else:
-                    elementos = [dados] if isinstance(dados, dict) and "item" in dados else []
-
-                for elemento in elementos:
-                    item_data = elemento.get("item", {}) if "item" in elemento else elemento
+                # Para colher os preços de forma robusta e identificar promoções de/por,
+                # usamos a chamada direta ao item (permitida no escopo do seu token)
+                resposta_item = requests.get(f"https://api.mercadolibre.com/items/{id_item}", headers=headers_autenticados, timeout=5)
+                if resposta_item.status_code != 200:
+                    continue
                     
-                    if not item_data or item_data.get("@type") != "Product":
-                        continue
+                item = resposta_item.json()
+                
+                if item.get("status") != "active":
+                    continue
 
-                    url_produto = item_data.get("url", "").split("?")[0]
-                    titulo = item_data.get("name", "")
-                    url_imagem = item_data.get("image", "")
+                preco_atual = item.get("price")
+                preco_original = item.get("original_price")
 
-                    # Tenta extrair informações de ofertas de preço
-                    offers = item_data.get("offers", {})
-                    if not offers:
-                        continue
+                # Se a API não trouxer preço original explícito, procuramos no base_price ou metadata
+                if not preco_original or preco_original <= preco_atual:
+                    preco_original = item.get("base_price")
 
-                    preco_atual = float(offers.get("price", 0))
-                    
-                    # Como o ld+json às vezes omite o preço original sem desconto,
-                    # se ele não constar explicitamente, calculamos um valor base de referência para o pipeline aceitar a promoção
-                    preco_anterior = float(offers.get("priceHigh", offers.get("price", 0)))
-                    if preco_anterior <= preco_atual:
-                        preco_anterior = round(preco_atual * 1.20, 2) # Estipula 20% de margem promocional
+                # Validação estrita do pipeline: Se não houver desconto real, pula para o próximo
+                if not preco_original or preco_original <= preco_atual:
+                    continue
 
-                    if preco_atual <= 0:
-                        continue
-
-                    # Extrai o ID MLB
-                    id_match = re.search(r'/MLB-(\d+)-', url_produto) or re.search(r'MLB(\d+)', url_produto)
-                    id_externo = f"MLB{id_match.group(1)}" if id_match else url_produto.split("/")[-1]
-
-                    ofertas.append({
-                        "id_externo": id_externo,
-                        "marketplace": self.nome_marketplace,
-                        "categoria": categoria,
-                        "titulo": titulo,
-                        "url_produto": url_produto,
-                        "url_afiliado": self.montar_link_afiliado(url_produto, self.tag_afiliado),
-                        "url_imagem": url_imagem,
-                        "preco_atual": preco_atual,
-                        "preco_anterior": preco_anterior,
-                        "frete_gratis": True,
-                        "parcelamento": None,
-                        "avaliacao": None,
-                    })
+                url_produto = item.get("permalink")
+                ofertas.append({
+                    "id_externo": item.get("id"),
+                    "marketplace": self.nome_marketplace,
+                    "categoria": categoria,
+                    "titulo": item.get("title"),
+                    "url_produto": url_produto,
+                    "url_afiliado": self.montar_link_afiliado(url_produto, self.tag_afiliado),
+                    "url_imagem": item.get("thumbnail"),
+                    "preco_atual": preco_atual,
+                    "preco_anterior": preco_original,
+                    "frete_gratis": item.get("shipping", {}).get("free_shipping", False),
+                    "parcelamento": None,
+                    "avaliacao": None,
+                })
             except Exception:
                 continue
 
-        # Fallback de segurança caso os metadados mudem de tag: varredura direta de scripts de estado da janela
-        if not ofertas:
-            state_match = re.search(r'window\.__PRELOADED_STATE__\s*=\s*({.*?});', html, re.DOTALL)
-            if state_match:
-                try:
-                    state_json = json.loads(state_match.group(1))
-                    # Varre a árvore de componentes buscando objetos que contenham preço e permalink
-                    for item in re.finditer(r'"id"\s*:\s*"(MLB\d+)"[^}]+?"permalink"\s*:\s*"(https://[^"]+)"', state_match.group(1)):
-                        id_ext, permalink = item.group(1), item.group(2).split("?")[0]
-                        # Estrutura básica apenas para popular o fluxo de postagem
-                        ofertas.append({
-                            "id_externo": id_ext,
-                            "marketplace": self.nome_marketplace,
-                            "categoria": categoria,
-                            "titulo": "Oferta Recomendada Mercado Livre",
-                            "url_produto": permalink,
-                            "url_afiliado": self.montar_link_afiliado(permalink, self.tag_afiliado),
-                            "url_imagem": "",
-                            "preco_atual": 99.90, # Valores fallback estruturais
-                            "preco_anterior": 129.90,
-                            "frete_gratis": True,
-                            "parcelamento": None,
-                            "avaliacao": None,
-                        })
-                except Exception:
-                    pass
-
-        logger.info(f"[JSON-PARSER] Concluido. {len(ofertas)} ofertas estruturadas capturadas em '{categoria}'.")
+        logger.info(f"[API-CATEGORIA] Varredura finalizada. {len(ofertas)} ofertas reais encontradas para '{categoria}'.")
         return ofertas
 
     def montar_link_afiliado(self, url_produto: str, tag_afiliado: str) -> str:
@@ -150,4 +148,26 @@ class MercadoLivreCollector(BaseCollector):
         return f"{url_produto}{separador}matt_word={tag_afiliado}"
 
     def verificar_oferta_atual(self, id_externo: str) -> dict | None:
-        return {"disponivel": True, "preco_atual": None}
+        if not self.access_token:
+            self._gerar_access_token()
+
+        if not self.access_token:
+            return None
+
+        headers_autenticados = self.headers.copy()
+        headers_autenticados["Authorization"] = f"Bearer {self.access_token}"
+
+        try:
+            resposta = requests.get(
+                f"https://api.mercadolibre.com/items/{id_externo}", headers=headers_autenticados, timeout=10
+            )
+            if resposta.status_code == 404:
+                return {"disponivel": False, "preco_atual": None}
+
+            resposta.raise_for_status()
+            dados = resposta.json()
+
+            disponivel = dados.get("status") == "active" and dados.get("available_quantity", 0) > 0
+            return {"disponivel": disponivel, "preco_atual": dados.get("price")}
+        except Exception:
+            return None
