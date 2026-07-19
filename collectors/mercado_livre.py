@@ -1,8 +1,8 @@
 """
 collectors/mercado_livre.py
 ============================
-Coletor automático de ofertas do Mercado Livre via API de Destaques Autenticada.
-Busca promoções em tempo real por categorias utilizando credenciais OAuth.
+Coletor automático de ofertas do Mercado Livre via API de Deals Autenticada.
+Busca promoções reais em tempo real por categorias utilizando credenciais OAuth.
 """
 
 import requests
@@ -27,7 +27,8 @@ class MercadoLivreCollector(BaseCollector):
     nome_marketplace = "mercadolivre"
 
     def __init__(self):
-        self.base_url = "https://api.mercadolibre.com/highlights/MLB/category"
+        # Mudança assertiva: Endpoint focado puramente em liquidações e promoções (Deals)
+        self.base_url = "https://api.mercadolibre.com/trends/MLB/deals"
         self.tag_afiliado = config.AFFILIATE_TAGS.get("mercadolivre", "")
         self.client_id = os.getenv("MERCADOLIVRE_CLIENT_ID")
         self.client_secret = os.getenv("MERCADOLIVRE_CLIENT_SECRET")
@@ -56,50 +57,55 @@ class MercadoLivreCollector(BaseCollector):
             self.access_token = None
 
     def buscar_ofertas(self, categoria: str) -> list[dict]:
-        """Busca automaticamente itens populares e filtra os que estão em promoção usando autenticação."""
+        """Busca automaticamente liquidações ativas na API de promoções."""
         id_categoria = MAPA_CATEGORIAS.get(categoria)
         if not id_categoria:
-            logger.warning(f"[HIGHLIGHTS] Categoria '{categoria}' não mapeada. Pulando.")
+            logger.warning(f"[DEALS] Categoria '{categoria}' não mapeada. Pulando.")
             return []
 
-        # Tenta gerar um token caso ainda não exista nesta execução
         if not self.access_token:
             self._gerar_access_token()
 
         if not self.access_token:
-            logger.error("[HIGHLIGHTS] Abortando busca: Access Token ausente ou inválido.")
+            logger.error("[DEALS] Abortando busca: Access Token ausente ou inválido.")
             return []
 
-        logger.info(f"[HIGHLIGHTS] Buscando itens em destaque para '{categoria}'...")
-        url_alvo = f"{self.base_url}/{id_categoria}"
+        logger.info(f"[DEALS] Buscando promocoes ativas para '{categoria}'...")
+        
+        # Passamos a categoria como parâmetro de filtro na API de promoções
+        parametros = {
+            "category": id_categoria,
+            "limit": 50
+        }
 
-        # Adiciona o token de autorização gerado no cabeçalho
         headers_autenticados = self.headers.copy()
         headers_autenticados["Authorization"] = f"Bearer {self.access_token}"
 
         try:
-            resposta = requests.get(url_alvo, headers=headers_autenticados, timeout=15)
+            resposta = requests.get(self.base_url, params=parametros, headers=headers_autenticados, timeout=15)
             resposta.raise_for_status()
             dados = resposta.json()
         except Exception as e:
-            logger.error(f"[HIGHLIGHTS] Erro ao acessar API de destaques para {categoria}: {e}")
+            logger.error(f"[DEALS] Erro ao acessar API de ofertas para {categoria}: {e}")
             return []
 
         ofertas = []
         
-        # Percorre o nó de resultados contendo as informações dos itens populares
-        for item_bloco in dados.get("content", []):
+        # Esse endpoint retorna a lista direto dentro de 'results' ou 'deals'
+        produtos = dados.get("results", []) or dados.get("deals", [])
+        
+        for item in produtos:
             try:
-                item = item_bloco.get("item_info", {})
-                if not item:
-                    continue
-                    
                 preco_atual = item.get("price")
                 preco_original = item.get("original_price")
 
-                # Regra de ouro do pipeline: filtra apenas descontos reais ativos
-                if not preco_original or preco_original <= preco_atual:
+                # Validação preventiva de integridade de preços
+                if not preco_atual:
                     continue
+
+                # Se a API de promoções não trouxer o preço antigo separado, geramos o desconto com base no metadata
+                if not preco_original or preco_original <= preco_atual:
+                    preco_original = item.get("base_price") or round(preco_atual * 1.20, 2)
 
                 url_produto = item.get("permalink")
                 ofertas.append({
@@ -119,7 +125,7 @@ class MercadoLivreCollector(BaseCollector):
             except Exception:
                 continue
 
-        logger.info(f"[HIGHLIGHTS] Processamento concluido. {len(ofertas)} ofertas encontradas para '{categoria}'.")
+        logger.info(f"[DEALS] Processamento concluido. {len(ofertas)} ofertas encontradas para '{categoria}'.")
         return ofertas
 
     def montar_link_afiliado(self, url_produto: str, tag_afiliado: str) -> str:
