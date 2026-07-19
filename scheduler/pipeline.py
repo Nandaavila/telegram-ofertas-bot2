@@ -30,7 +30,7 @@ import os
 # uma linha aqui (depois de implementar a classe collector correspondente).
 COLETORES = [
     MercadoLivreCollector(),
-    ShopeeCollector(),
+    # ShopeeCollector(),
     # AmazonCollector(),
     # FeedAfiliadosCollector(nome_marketplace="magalu", feed_url="..."),
 ]

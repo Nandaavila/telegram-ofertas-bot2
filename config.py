@@ -58,9 +58,10 @@ CATEGORIAS_ATIVAS = {
 # Seus links de afiliado por marketplace (o "tag"/"id" que você recebe
 # ao se cadastrar em cada programa de afiliados).
 AFFILIATE_TAGS = {
-    #"mercadolivre": os.getenv("ML_AFFILIATE_TAG", ""),
+    "mercadolivre": os.getenv("ML_AFFILIATE_TAG", ""),
+    "mercadolivre_matt_tool": os.getenv("ML_MATT_TOOL", ""),
     #"amazon": os.getenv("AMAZON_AFFILIATE_TAG", ""),
-    "shopee": os.getenv("SHOPEE_AFFILIATE_TAG", ""),
+    #"shopee": os.getenv("SHOPEE_AFFILIATE_TAG", ""),
     #"magalu": os.getenv("MAGALU_AFFILIATE_TAG", ""),
 }
 
