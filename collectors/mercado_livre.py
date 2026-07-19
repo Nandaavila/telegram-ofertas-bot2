@@ -1,27 +1,15 @@
 """
 collectors/mercado_livre.py
 ============================
-Coletor de ofertas do Mercado Livre.
-
-O Mercado Livre disponibiliza uma API PÚBLICA de busca, sem necessidade
-de scraping, em:
-    https://api.mercadolibre.com/sites/MLB/search?q=<termo>
-
-Isso é ótimo para nós: dados estruturados, estáveis, sem risco de bloqueio
-por "bater" no HTML da página.
-
-Para o programa de afiliados oficial, veja:
-    https://www.mercadolivre.com.br/afiliados
-O "tag" de afiliado é anexado como parâmetro na URL final do produto.
+Coletor de ofertas do Mercado Livre com autenticação via Client Credentials.
 """
 
 import requests
+import os
 from collectors.base_collector import BaseCollector
 import config
 
 # Mapeamos nossas categorias internas para os termos de busca do Mercado Livre.
-# Você pode refinar isso usando as category_id oficiais da API do ML
-# (endpoint /sites/MLB/categories) para resultados mais precisos.
 MAPA_CATEGORIAS = {
     "casa": "casa e decoracao",
     "eletronicos": "eletronicos",
@@ -38,9 +26,35 @@ class MercadoLivreCollector(BaseCollector):
     def __init__(self):
         self.base_url = "https://api.mercadolibre.com/sites/MLB/search"
         self.tag_afiliado = config.AFFILIATE_TAGS.get("mercadolivre", "")
+        # Puxa as variáveis configuradas no Railway
+        self.client_id = os.getenv("MERCADOLIVRE_CLIENT_ID")
+        self.client_secret = os.getenv("MERCADOLIVRE_CLIENT_SECRET")
+        self.access_token = None
+
+    def _gerar_access_token(self):
+        """Gera um token válido usando o fluxo de Client Credentials."""
+        url = "https://api.mercadolibre.com/oauth/token"
+        payload = {
+            "grant_type": "client_credentials",
+            "client_id": self.client_id,
+            "client_secret": self.client_secret
+        }
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        
+        try:
+            resposta = requests.post(url, data=payload, headers=headers, timeout=10)
+            resposta.raise_for_status()
+            self.access_token = resposta.json().get("access_token")
+        except Exception as e:
+            print(f"[ERROR] Falha ao gerar Access Token do Mercado Livre: {e}")
+            self.access_token = None
 
     def buscar_ofertas(self, categoria: str) -> list[dict]:
         termo_busca = MAPA_CATEGORIAS.get(categoria, categoria)
+
+        # Se não houver token ativo para esta execução, tenta gerar um
+        if not self.access_token:
+            self._gerar_access_token()
 
         parametros = {
             "q": termo_busca,
@@ -48,7 +62,11 @@ class MercadoLivreCollector(BaseCollector):
             "sort": "relevance",
         }
 
-        resposta = requests.get(self.base_url, params=parametros, timeout=15)
+        headers = {}
+        if self.access_token:
+            headers["Authorization"] = f"Bearer {self.access_token}"
+
+        resposta = requests.get(self.base_url, params=parametros, headers=headers, timeout=15)
         resposta.raise_for_status()  # lança erro se a API retornar status != 200
         dados = resposta.json()
 
@@ -73,35 +91,27 @@ class MercadoLivreCollector(BaseCollector):
                 "preco_atual": preco_atual,
                 "preco_anterior": preco_original,
                 "frete_gratis": item.get("shipping", {}).get("free_shipping", False),
-                "parcelamento": None,  # a API de busca não traz isso; ver detalhe do item se precisar
+                "parcelamento": None,  # a API de busca não traz isso
                 "avaliacao": None,     # idem — endpoint de reviews é separado
             })
 
         return ofertas
 
     def montar_link_afiliado(self, url_produto: str, tag_afiliado: str) -> str:
-        # O Mercado Livre usa o parâmetro "matt_word"/"matt_tool" no seu
-        # sistema de afiliados oficial. Ajuste conforme as instruções que
-        # você recebe ao gerar links no painel de afiliados do ML.
         separador = "&" if "?" in url_produto else "?"
         return f"{url_produto}{separador}matt_word={tag_afiliado}"
 
     def verificar_oferta_atual(self, id_externo: str) -> dict | None:
-        """
-        O Mercado Livre tem um endpoint dedicado para consultar UM item
-        específico pelo seu ID — muito mais eficiente do que refazer uma
-        busca inteira só para checar se um produto ainda está disponível.
+        if not self.access_token:
+            self._gerar_access_token()
 
-        Endpoint: https://api.mercadolibre.com/items/{item_id}
+        headers = {}
+        if self.access_token:
+            headers["Authorization"] = f"Bearer {self.access_token}"
 
-        Campos relevantes retornados:
-        - status: "active" (à venda), "paused" ou "closed" (indisponível)
-        - available_quantity: quantas unidades ainda restam em estoque
-        - price: preço atual
-        """
         try:
             resposta = requests.get(
-                f"https://api.mercadolibre.com/items/{id_externo}", timeout=10
+                f"https://api.mercadolibre.com/items/{id_externo}", headers=headers, timeout=10
             )
             if resposta.status_code == 404:
                 # Item removido do catálogo
@@ -118,6 +128,4 @@ class MercadoLivreCollector(BaseCollector):
 
         except Exception:
             # Qualquer falha de rede/parsing -> não conseguimos confirmar.
-            # Retornamos None para que o job de expiração trate isso como
-            # "não sei, deixa como está" (veja o comentário em BaseCollector).
             return None
