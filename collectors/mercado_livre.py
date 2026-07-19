@@ -1,7 +1,7 @@
 """
 collectors/mercado_livre.py
 ============================
-Coletor de ofertas do Mercado Livre com autenticação via Client Credentials usando IDs de categorias.
+Coletor de ofertas do Mercado Livre com autenticação via Client Credentials usando verificação direta de itens.
 """
 
 import requests
@@ -12,22 +12,17 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# Mapeamos nossas categorias internas para os IDs reais de categorias da API do Mercado Livre (MLB)
-MAPA_CATEGORIAS = {
-    "casa": "MLB1574",          # Casa, Móveis e Decoração
-    "eletronicos": "MLB1000",    # Eletrônicos, Áudio e Vídeo
-    "moda_feminina": "MLB1246",  # Calçados, Roupas e Bolsas (Filtro Geral)
-    "moda_masculina": "MLB1246", # Calçados, Roupas e Bolsas (Filtro Geral)
-    "beleza": "MLB1248",        # Beleza e Cuidado Pessoal
-    "informatica": "MLB1648",    # Informática
-}
-
+# Lista de IDs de produtos específicos para monitorar (coloque exemplos de IDs reais do ML aqui)
+PRODUTOS_PARA_MONITORAR = [
+    "MLB3325067933",  # Exemplo de item 1
+    "MLB3546128495",  # Exemplo de item 2
+]
 
 class MercadoLivreCollector(BaseCollector):
     nome_marketplace = "mercadolivre"
 
     def __init__(self):
-        self.base_url = "https://api.mercadolibre.com/sites/MLB/search"
+        self.base_url = "https://api.mercadolibre.com/items"
         self.tag_afiliado = config.AFFILIATE_TAGS.get("mercadolivre", "")
         self.client_id = os.getenv("MERCADOLIVRE_CLIENT_ID")
         self.client_secret = os.getenv("MERCADOLIVRE_CLIENT_SECRET")
@@ -53,12 +48,7 @@ class MercadoLivreCollector(BaseCollector):
             self.access_token = None
 
     def buscar_ofertas(self, categoria: str) -> list[dict]:
-        # Obtém o ID da categoria correspondente
-        id_categoria = MAPA_CATEGORIAS.get(categoria)
-        if not id_categoria:
-            logger.warning(f"[BUSCA] Categoria '{categoria}' não mapeada para ID do ML. Pulando.")
-            return []
-
+        """Varre a lista fixa de produtos cadastrados coletando os dados de preço."""
         if not self.access_token:
             self._gerar_access_token()
 
@@ -66,42 +56,47 @@ class MercadoLivreCollector(BaseCollector):
             logger.error("[BUSCA] Abortando busca: Access Token ausente ou inválido.")
             return []
 
-        # Trocamos o parâmetro text 'q' pelo parâmetro de categoria oficial 'category'
-        parametros = {
-            "category": id_categoria,
-            "limit": 50,
-            "sort": "relevance",
-        }
-
+        ofertas = []
         headers = {"Authorization": f"Bearer {self.access_token}"}
 
-        resposta = requests.get(self.base_url, params=parametros, headers=headers, timeout=15)
-        resposta.raise_for_status()
-        dados = resposta.json()
+        # Em vez de buscar na API de search, fazemos a requisição direta por item cadastrado
+        for id_externo in PRODUTOS_PARA_MONITORAR:
+            try:
+                resposta = requests.get(f"{self.base_url}/{id_externo}", headers=headers, timeout=10)
+                if resposta.status_code != 200:
+                    continue
+                
+                item = resposta.json()
+                
+                # Só processa se o produto estiver ativo
+                if item.get("status") != "active":
+                    continue
 
-        ofertas = []
-        for item in dados.get("results", []):
-            preco_atual = item.get("price")
-            preco_original = item.get("original_price")
+                preco_atual = item.get("price")
+                preco_original = item.get("original_price")
 
-            if not preco_original or preco_original <= preco_atual:
+                # Filtra apenas itens com desconto real "de / por"
+                if not preco_original or preco_original <= preco_atual:
+                    continue
+
+                url_produto = item.get("permalink")
+                ofertas.append({
+                    "id_externo": item.get("id"),
+                    "marketplace": self.nome_marketplace,
+                    "categoria": categoria, # Mantém compatibilidade com o pipeline
+                    "titulo": item.get("title"),
+                    "url_produto": url_produto,
+                    "url_afiliado": self.montar_link_afiliado(url_produto, self.tag_afiliado),
+                    "url_imagem": item.get("thumbnail"),
+                    "preco_atual": preco_atual,
+                    "preco_anterior": preco_original,
+                    "frete_gratis": item.get("shipping", {}).get("free_shipping", False),
+                    "parcelamento": None,
+                    "avaliacao": None,
+                })
+            except Exception as e:
+                logger.error(f"[BUSCA] Erro ao processar item {id_externo}: {e}")
                 continue
-
-            url_produto = item.get("permalink")
-            ofertas.append({
-                "id_externo": item.get("id"),
-                "marketplace": self.nome_marketplace,
-                "categoria": categoria,
-                "titulo": item.get("title"),
-                "url_produto": url_produto,
-                "url_afiliado": self.montar_link_afiliado(url_produto, self.tag_afiliado),
-                "url_imagem": item.get("thumbnail"),
-                "preco_atual": preco_atual,
-                "preco_anterior": preco_original,
-                "frete_gratis": item.get("shipping", {}).get("free_shipping", False),
-                "parcelamento": None,
-                "avaliacao": None,
-            })
 
         return ofertas
 
@@ -120,7 +115,7 @@ class MercadoLivreCollector(BaseCollector):
 
         try:
             resposta = requests.get(
-                f"https://api.mercadolibre.com/items/{id_externo}", headers=headers, timeout=10
+                f"{self.base_url}/{id_externo}", headers=headers, timeout=10
             )
             if resposta.status_code == 404:
                 return {"disponivel": False, "preco_atual": None}
