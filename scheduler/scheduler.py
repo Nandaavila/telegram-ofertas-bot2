@@ -12,7 +12,7 @@ Por que APScheduler e não apenas 'time.sleep()' em loop?
 """
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from zoneinfo import ZoneInfo
+from datetime import timezone, timedelta
 from apscheduler.triggers.cron import CronTrigger
 import config
 from scheduler.pipeline import tarefa_buscar_ofertas, tarefa_publicar_oferta
@@ -21,7 +21,8 @@ from processing.sincronizar_conversoes import tarefa_sincronizar_conversoes_shop
 
 
 def iniciar_agendador() -> AsyncIOScheduler:
-    scheduler = AsyncIOScheduler(timezone=ZoneInfo("America/Recife"))
+    fuso_recife = timezone(timedelta(hours=-3))
+    scheduler = AsyncIOScheduler(timezone=fuso_recife)
 
     # Tarefa de BUSCA: roda a cada N minutos (configurável em config.py)
     scheduler.add_job(
