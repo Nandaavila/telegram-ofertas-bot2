@@ -6,8 +6,11 @@ Coletor de ofertas do Mercado Livre com autenticação via Client Credentials.
 
 import requests
 import os
+import logging
 from collectors.base_collector import BaseCollector
 import config
+
+logger = logging.getLogger(__name__)
 
 # Mapeamos nossas categorias internas para os termos de busca do Mercado Livre.
 MAPA_CATEGORIAS = {
@@ -34,6 +37,10 @@ class MercadoLivreCollector(BaseCollector):
     def _gerar_access_token(self):
         """Gera um token válido usando o fluxo de Client Credentials."""
         url = "https://api.mercadolibre.com/oauth/token"
+        
+        # Loga o estado das variáveis no formato oficial do sistema
+        logger.info(f"[OAUTH] ID presente: {self.client_id is not None} | Secret presente: {self.client_secret is not None}")
+        
         payload = {
             "grant_type": "client_credentials",
             "client_id": self.client_id,
@@ -45,20 +52,22 @@ class MercadoLivreCollector(BaseCollector):
             resposta = requests.post(url, data=payload, headers=headers, timeout=10)
             resposta.raise_for_status()
             self.access_token = resposta.json().get("access_token")
+            logger.info("[OAUTH] Access Token gerado com sucesso.")
         except Exception as e:
-            print(f"[ERROR] Falha ao gerar Access Token do Mercado Livre: {e}")
+            logger.error(f"[OAUTH] Erro crítico ao gerar Access Token: {e}")
             self.access_token = None
 
     def buscar_ofertas(self, categoria: str) -> list[dict]:
-        # PRINTS DE DEBUG INSERIDOS DIRETAMENTE NO FLUXO ATIVO
-        print(f"[DEBUG-BUSCA] ID encontrado: {self.client_id is not None}")
-        print(f"[DEBUG-BUSCA] Secret encontrado: {self.client_secret is not None}")
-        
         termo_busca = MAPA_CATEGORIAS.get(categoria, categoria)
 
-        # Se não houver token ativo para esta execução, tenta gerar um
+        # Força a geração ou renovação do token
         if not self.access_token:
             self._gerar_access_token()
+
+        # Se o token falhar, interrompe antes de tomar o 403 do Mercado Livre
+        if not self.access_token:
+            logger.error("[BUSCA] Abortando busca: Access Token ausente ou inválido.")
+            return []
 
         parametros = {
             "q": termo_busca,
@@ -66,9 +75,7 @@ class MercadoLivreCollector(BaseCollector):
             "sort": "relevance",
         }
 
-        headers = {}
-        if self.access_token:
-            headers["Authorization"] = f"Bearer {self.access_token}"
+        headers = {"Authorization": f"Bearer {self.access_token}"}
 
         resposta = requests.get(self.base_url, params=parametros, headers=headers, timeout=15)
         resposta.raise_for_status()  # lança erro se a API retornar status != 200
@@ -109,9 +116,10 @@ class MercadoLivreCollector(BaseCollector):
         if not self.access_token:
             self._gerar_access_token()
 
-        headers = {}
-        if self.access_token:
-            headers["Authorization"] = f"Bearer {self.access_token}"
+        if not self.access_token:
+            return None
+
+        headers = {"Authorization": f"Bearer {self.access_token}"}
 
         try:
             resposta = requests.get(
