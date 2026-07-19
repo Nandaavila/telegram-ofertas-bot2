@@ -31,10 +31,6 @@ class MercadoLivreCollector(BaseCollector):
         self.client_secret = os.getenv("MERCADOLIVRE_CLIENT_SECRET")
         self.access_token = None
 
-        # ADICIONE APENAS ESTAS DUAS LINHAS ABAIXO PARA DETECTARMOS O ERRO:
-        print(f"[DEBUG] ID encontrado: {self.client_id is not None}")
-        print(f"[DEBUG] Secret encontrado: {self.client_secret is not None}")
-
     def _gerar_access_token(self):
         """Gera um token válido usando o fluxo de Client Credentials."""
         url = "https://api.mercadolibre.com/oauth/token"
@@ -54,6 +50,10 @@ class MercadoLivreCollector(BaseCollector):
             self.access_token = None
 
     def buscar_ofertas(self, categoria: str) -> list[dict]:
+        # PRINTS DE DEBUG INSERIDOS DIRETAMENTE NO FLUXO ATIVO
+        print(f"[DEBUG-BUSCA] ID encontrado: {self.client_id is not None}")
+        print(f"[DEBUG-BUSCA] Secret encontrado: {self.client_secret is not None}")
+        
         termo_busca = MAPA_CATEGORIAS.get(categoria, categoria)
 
         # Se não houver token ativo para esta execução, tenta gerar um
@@ -95,8 +95,8 @@ class MercadoLivreCollector(BaseCollector):
                 "preco_atual": preco_atual,
                 "preco_anterior": preco_original,
                 "frete_gratis": item.get("shipping", {}).get("free_shipping", False),
-                "parcelamento": None,  # a API de busca não traz isso
-                "avaliacao": None,     # idem — endpoint de reviews é separado
+                "parcelamento": None,
+                "avaliacao": None,
             })
 
         return ofertas
@@ -118,7 +118,6 @@ class MercadoLivreCollector(BaseCollector):
                 f"https://api.mercadolibre.com/items/{id_externo}", headers=headers, timeout=10
             )
             if resposta.status_code == 404:
-                # Item removido do catálogo
                 return {"disponivel": False, "preco_atual": None}
 
             resposta.raise_for_status()
@@ -131,5 +130,4 @@ class MercadoLivreCollector(BaseCollector):
             return {"disponivel": disponivel, "preco_atual": dados.get("price")}
 
         except Exception:
-            # Qualquer falha de rede/parsing -> não conseguimos confirmar.
             return None
