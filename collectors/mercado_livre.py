@@ -1,117 +1,92 @@
 """
 collectors/mercado_livre.py
 ============================
-Coletor automático de ofertas do Mercado Livre via Web Scraping.
-Busca promoções em tempo real por categorias sem depender de chaves de API.
+Coletor automático de ofertas do Mercado Livre via API pública não autenticada.
+Busca promoções em tempo real usando filtros de desconto direto em formato JSON.
 """
 
 import requests
-import re
 import logging
 from collectors.base_collector import BaseCollector
 import config
 
 logger = logging.getLogger(__name__)
 
-# Mapeamos as categorias internas diretamente para os filtros da central de ofertas oficiais do Mercado Livre
-MAPA_URLS_CATEGORIAS = {
-    "casa": "https://www.mercadolivre.com.br/ofertas?container_id=MLB1752800-1&category=MLB1574",
-    "eletronicos": "https://www.mercadolivre.com.br/ofertas?container_id=MLB1752800-1&category=MLB1000",
-    "moda_feminina": "https://www.mercadolivre.com.br/ofertas?container_id=MLB1752800-1&category=MLB1246",
-    "moda_masculina": "https://www.mercadolivre.com.br/ofertas?container_id=MLB1752800-1&category=MLB1246",
-    "beleza": "https://www.mercadolivre.com.br/ofertas?container_id=MLB1752800-1&category=MLB1248",
-    "informatica": "https://www.mercadolivre.com.br/ofertas?container_id=MLB1752800-1&category=MLB1648",
+# Mapeamos as categorias internas para os IDs reais de categorias da API do Mercado Livre (MLB)
+MAPA_CATEGORIAS = {
+    "casa": "MLB1574",          # Casa, Móveis e Decoração
+    "eletronicos": "MLB1000",    # Eletrônicos, Áudio e Vídeo
+    "moda_feminina": "MLB1246",  # Calçados, Roupas e Bolsas
+    "moda_masculina": "MLB1246", # Calçados, Roupas e Bolsas
+    "beleza": "MLB1248",        # Beleza e Cuidado Pessoal
+    "informatica": "MLB1648",    # Informática
 }
 
 class MercadoLivreCollector(BaseCollector):
     nome_marketplace = "mercadolivre"
 
     def __init__(self):
+        # Usamos o endpoint de busca padrão, mas sem cabeçalhos de autenticação OAuth
+        self.base_url = "https://api.mercadolibre.com/sites/MLB/search"
         self.tag_afiliado = config.AFFILIATE_TAGS.get("mercadolivre", "")
         self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         }
 
     def buscar_ofertas(self, categoria: str) -> list[dict]:
-        """Varre a página web da categoria extraindo as promoções ativas de forma automática."""
-        url_alvo = MAPA_URLS_CATEGORIAS.get(categoria)
-        if not url_alvo:
-            logger.warning(f"[SCRAPER] Categoria '{categoria}' não mapeada para URL. Pulando.")
+        """Busca produtos em promoção na API pública de forma anônima e dinâmica."""
+        id_categoria = MAPA_CATEGORIAS.get(categoria)
+        if not id_categoria:
+            logger.warning(f"[API-PUBLICA] Categoria '{categoria}' não mapeada. Pulando.")
             return []
 
-        logger.info(f"[SCRAPER] Iniciando varredura automatica de promocoes em '{categoria}'...")
-        
+        logger.info(f"[API-PUBLICA] Buscando promocoes na API publica para '{categoria}'...")
+
+        # Parâmetros para filtrar apenas itens com desconto relevante na categoria
+        parametros = {
+            "category": id_categoria,
+            "limit": 50,
+            "sort": "relevance"
+        }
+
         try:
-            resposta = requests.get(url_alvo, headers=self.headers, timeout=15)
+            # A mágica está aqui: SEM cabeçalho 'Authorization' para não disparar a trava de Client Credentials
+            resposta = requests.get(self.base_url, params=parametros, headers=self.headers, timeout=15)
             resposta.raise_for_status()
-            html = resposta.text
+            dados = resposta.json()
         except Exception as e:
-            logger.error(f"[SCRAPER] Erro ao acessar pagina do Mercado Livre para categoria {categoria}: {e}")
+            logger.error(f"[API-PUBLICA] Erro ao consultar API para categoria {categoria}: {e}")
             return []
 
-        # Captura os blocos de produtos de forma mais abrangente na página de ofertas
-        bloco_items = re.findall(r'<div class="promotion-item__container[^"]*">.*?</div>\s*</div>\s*</div>', html, re.DOTALL) or \
-                      re.findall(r'<ol class="ui-search-layout__item[^"]*">.*?</ol>', html, re.DOTALL) or \
-                      re.findall(r'<li class="ui-search-layout__item[^"]*">.*?</li>', html, re.DOTALL)
-        
         ofertas = []
-        for bloco in bloco_items:
+        for item in dados.get("results", []):
             try:
-                # 1. Extrai a URL do Produto
-                url_match = re.search(r'href="(https://[^\s"]+?produto\.mercadolivre\.com\.br/[^"]+?)"', bloco)
-                if not url_match:
-                    continue
-                url_produto = url_match.group(1).split("?")[0]
+                preco_atual = item.get("price")
+                preco_original = item.get("original_price")
 
-                # 2. Título do Produto
-                titulo_match = re.search(r'<p[^>]*class="[^"]*promotion-item__title[^"]*"[^>]*>(.*?)</p>', bloco, re.DOTALL) or \
-                               re.search(r'<h2[^>]*class="[^"]*ui-search-item__title[^"]*"[^>]*>(.*?)</h2>', bloco, re.DOTALL)
-                if not titulo_match:
-                    continue
-                titulo = titulo_match.group(1).strip()
-
-                # 3. Extrai a imagem
-                img_match = re.search(r'src="([^"]+?)"', bloco)
-                url_imagem = img_match.group(1) if img_match else ""
-
-                # 4. Captura os Preços
-                precos = re.findall(r'<span class="andes-money-amount__fraction"[^>]*>([^<]+)</span>', bloco)
-                if len(precos) < 2:
+                # Só extrai se o produto tiver um desconto real ativo no catálogo
+                if not preco_original or preco_original <= preco_atual:
                     continue
 
-                # Na estrutura de ofertas, o primeiro valor costuma ser o antigo e o segundo o atual
-                preco_anterior = float(precos[0].replace(".", "").replace(",", "."))
-                preco_atual = float(precos[1].replace(".", "").replace(",", "."))
-
-                if preco_anterior <= preco_atual:
-                    continue
-
-                frete_gratis = "frete grátis" in bloco.lower() or "frete grátis" in html.lower()
-
-                id_match = re.search(r'/MLB-(\d+)-', url_produto) or re.search(r'MLB(\d+)', url_produto)
-                id_externo = f"MLB{id_match.group(1)}" if id_match else url_produto.split("/")[-1]
-
+                url_produto = item.get("permalink")
                 ofertas.append({
-                    "id_externo": id_externo,
+                    "id_externo": item.get("id"),
                     "marketplace": self.nome_marketplace,
                     "categoria": categoria,
-                    "titulo": titulo,
+                    "titulo": item.get("title"),
                     "url_produto": url_produto,
                     "url_afiliado": self.montar_link_afiliado(url_produto, self.tag_afiliado),
-                    "url_imagem": url_imagem,
+                    "url_imagem": item.get("thumbnail"),
                     "preco_atual": preco_atual,
-                    "preco_anterior": preco_anterior,
-                    "frete_gratis": frete_gratis,
+                    "preco_anterior": preco_original,
+                    "frete_gratis": item.get("shipping", {}).get("free_shipping", False),
                     "parcelamento": None,
                     "avaliacao": None,
                 })
-
             except Exception:
                 continue
 
-        logger.info(f"[SCRAPER] Varredura concluida. {len(ofertas)} ofertas reais encontradas para '{categoria}'.")
+        logger.info(f"[API-PUBLICA] Varredura concluida. {len(ofertas)} ofertas encontradas para '{categoria}'.")
         return ofertas
 
     def montar_link_afiliado(self, url_produto: str, tag_afiliado: str) -> str:
@@ -119,4 +94,15 @@ class MercadoLivreCollector(BaseCollector):
         return f"{url_produto}{separador}matt_word={tag_afiliado}"
 
     def verificar_oferta_atual(self, id_externo: str) -> dict | None:
-        return {"disponivel": True, "preco_atual": None}
+        """Verifica a disponibilidade individual usando a rota pública do item."""
+        try:
+            resposta = requests.get(f"https://api.mercadolibre.com/items/{id_externo}", headers=self.headers, timeout=10)
+            if resposta.status_code == 404:
+                return {"disponivel": False, "preco_atual": None}
+            
+            resposta.raise_for_status()
+            dados = resposta.json()
+            disponivel = dados.get("status") == "active" and dados.get("available_quantity", 0) > 0
+            return {"disponivel": disponivel, "preco_atual": dados.get("price")}
+        except Exception:
+            return None
