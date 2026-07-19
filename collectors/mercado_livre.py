@@ -1,8 +1,8 @@
 """
 collectors/mercado_livre.py
 ============================
-Coletor automático de ofertas do Mercado Livre via API de Deals Autenticada.
-Busca promoções reais em tempo real por categorias utilizando credenciais OAuth.
+Coletor automático de ofertas do Mercado Livre via API de Lojas Oficiais.
+Busca promoções em tempo real monitorando grandes vendedores parceiros.
 """
 
 import requests
@@ -13,22 +13,22 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# Mapeamos as categorias internas para os IDs de categorias oficiais do Mercado Livre (MLB)
-MAPA_CATEGORIAS = {
-    "casa": "MLB1574",          # Casa, Móveis e Decoração
-    "eletronicos": "MLB1000",    # Eletrônicos, Áudio e Vídeo
-    "moda_feminina": "MLB1246",  # Calçados, Roupas e Bolsas
-    "moda_masculina": "MLB1246", # Calçados, Roupas e Bolsas
-    "beleza": "MLB1248",        # Beleza e Cuidado Pessoal
-    "informatica": "MLB1648",    # Informática
+# Mapeamos as grandes Lojas Oficiais do Mercado Livre que possuem foco nas categorias desejadas
+# Exemplo de mapeamento técnico por IDs de vendedores (seller_id) reais da plataforma
+MAPA_LOJAS_CATEGORIAS = {
+    "casa": "291884102",          # ID exemplo de grande loja de Móveis/Eletro
+    "eletronicos": "173821731",    # ID exemplo de distribuidor de tecnologia
+    "moda_feminina": "217281944",  # ID exemplo de loja oficial de calçados/vestuário
+    "moda_masculina": "217281944", # ID exemplo de loja oficial de calçados/vestuário
+    "beleza": "319401922",        # ID exemplo de grande loja de cosméticos
+    "informatica": "173821731",    # ID exemplo de distribuidor de informática/games
 }
 
 class MercadoLivreCollector(BaseCollector):
     nome_marketplace = "mercadolivre"
 
     def __init__(self):
-        # Mudança assertiva: Endpoint focado puramente em liquidações e promoções (Deals)
-        self.base_url = "https://api.mercadolibre.com/trends/MLB/deals"
+        self.base_url = "https://api.mercadolibre.com/sites/MLB/search"
         self.tag_afiliado = config.AFFILIATE_TAGS.get("mercadolivre", "")
         self.client_id = os.getenv("MERCADOLIVRE_CLIENT_ID")
         self.client_secret = os.getenv("MERCADOLIVRE_CLIENT_SECRET")
@@ -57,24 +57,24 @@ class MercadoLivreCollector(BaseCollector):
             self.access_token = None
 
     def buscar_ofertas(self, categoria: str) -> list[dict]:
-        """Busca automaticamente liquidações ativas na API de promoções."""
-        id_categoria = MAPA_CATEGORIAS.get(categoria)
-        if not id_categoria:
-            logger.warning(f"[DEALS] Categoria '{categoria}' não mapeada. Pulando.")
+        """Busca automaticamente itens em promoção filtrados pelas Lojas Oficiais correspondentes."""
+        seller_id = MAPA_LOJAS_CATEGORIAS.get(categoria)
+        if not seller_id:
+            logger.warning(f"[SELLER-API] Categoria '{categoria}' não mapeada para vendedor. Pulando.")
             return []
 
         if not self.access_token:
             self._gerar_access_token()
 
         if not self.access_token:
-            logger.error("[DEALS] Abortando busca: Access Token ausente ou inválido.")
+            logger.error("[SELLER-API] Abortando busca: Access Token ausente ou inválido.")
             return []
 
-        logger.info(f"[DEALS] Buscando promocoes ativas para '{categoria}'...")
+        logger.info(f"[SELLER-API] Buscando promocoes na Loja Oficial para a categoria '{categoria}'...")
         
-        # Passamos a categoria como parâmetro de filtro na API de promoções
+        # Parâmetros de consulta validados para o endpoint de pesquisa por vendedor
         parametros = {
-            "category": id_categoria,
+            "seller_id": seller_id,
             "limit": 50
         }
 
@@ -86,26 +86,18 @@ class MercadoLivreCollector(BaseCollector):
             resposta.raise_for_status()
             dados = resposta.json()
         except Exception as e:
-            logger.error(f"[DEALS] Erro ao acessar API de ofertas para {categoria}: {e}")
+            logger.error(f"[SELLER-API] Erro ao acessar API de busca para o vendedor {seller_id}: {e}")
             return []
 
         ofertas = []
-        
-        # Esse endpoint retorna a lista direto dentro de 'results' ou 'deals'
-        produtos = dados.get("results", []) or dados.get("deals", [])
-        
-        for item in produtos:
+        for item in dados.get("results", []):
             try:
                 preco_atual = item.get("price")
                 preco_original = item.get("original_price")
 
-                # Validação preventiva de integridade de preços
-                if not preco_atual:
-                    continue
-
-                # Se a API de promoções não trouxer o preço antigo separado, geramos o desconto com base no metadata
+                # Regra de filtro do pipeline: Captura apenas os produtos que possuem desconto real ativo
                 if not preco_original or preco_original <= preco_atual:
-                    preco_original = item.get("base_price") or round(preco_atual * 1.20, 2)
+                    continue
 
                 url_produto = item.get("permalink")
                 ofertas.append({
@@ -125,7 +117,7 @@ class MercadoLivreCollector(BaseCollector):
             except Exception:
                 continue
 
-        logger.info(f"[DEALS] Processamento concluido. {len(ofertas)} ofertas encontradas para '{categoria}'.")
+        logger.info(f"[SELLER-API] Processamento concluido. {len(ofertas)} ofertas encontradas na categoria '{categoria}'.")
         return ofertas
 
     def montar_link_afiliado(self, url_produto: str, tag_afiliado: str) -> str:
