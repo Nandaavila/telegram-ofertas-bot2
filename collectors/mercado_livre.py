@@ -1,7 +1,7 @@
 """
 collectors/mercado_livre.py
 ============================
-Coletor de ofertas do Mercado Livre com autenticação via Client Credentials.
+Coletor de ofertas do Mercado Livre com autenticação via Client Credentials usando IDs de categorias.
 """
 
 import requests
@@ -12,14 +12,14 @@ import config
 
 logger = logging.getLogger(__name__)
 
-# Mapeamos nossas categorias internas para os termos de busca do Mercado Livre.
+# Mapeamos nossas categorias internas para os IDs reais de categorias da API do Mercado Livre (MLB)
 MAPA_CATEGORIAS = {
-    "casa": "casa e decoracao",
-    "eletronicos": "eletronicos",
-    "moda_feminina": "moda feminina",
-    "moda_masculina": "moda masculina",
-    "beleza": "beleza e cuidado pessoal",
-    "informatica": "informatica",
+    "casa": "MLB1574",          # Casa, Móveis e Decoração
+    "eletronicos": "MLB1000",    # Eletrônicos, Áudio e Vídeo
+    "moda_feminina": "MLB1246",  # Calçados, Roupas e Bolsas (Filtro Geral)
+    "moda_masculina": "MLB1246", # Calçados, Roupas e Bolsas (Filtro Geral)
+    "beleza": "MLB1248",        # Beleza e Cuidado Pessoal
+    "informatica": "MLB1648",    # Informática
 }
 
 
@@ -29,7 +29,6 @@ class MercadoLivreCollector(BaseCollector):
     def __init__(self):
         self.base_url = "https://api.mercadolibre.com/sites/MLB/search"
         self.tag_afiliado = config.AFFILIATE_TAGS.get("mercadolivre", "")
-        # Puxa as variáveis configuradas no Railway
         self.client_id = os.getenv("MERCADOLIVRE_CLIENT_ID")
         self.client_secret = os.getenv("MERCADOLIVRE_CLIENT_SECRET")
         self.access_token = None
@@ -37,10 +36,6 @@ class MercadoLivreCollector(BaseCollector):
     def _gerar_access_token(self):
         """Gera um token válido usando o fluxo de Client Credentials."""
         url = "https://api.mercadolibre.com/oauth/token"
-        
-        # Loga o estado das variáveis no formato oficial do sistema
-        logger.info(f"[OAUTH] ID presente: {self.client_id is not None} | Secret presente: {self.client_secret is not None}")
-        
         payload = {
             "grant_type": "client_credentials",
             "client_id": self.client_id,
@@ -58,35 +53,37 @@ class MercadoLivreCollector(BaseCollector):
             self.access_token = None
 
     def buscar_ofertas(self, categoria: str) -> list[dict]:
-        termo_busca = MAPA_CATEGORIAS.get(categoria, categoria)
+        # Obtém o ID da categoria correspondente
+        id_categoria = MAPA_CATEGORIAS.get(categoria)
+        if not id_categoria:
+            logger.warning(f"[BUSCA] Categoria '{categoria}' não mapeada para ID do ML. Pulando.")
+            return []
 
-        # Força a geração ou renovação do token
         if not self.access_token:
             self._gerar_access_token()
 
-        # Se o token falhar, interrompe antes de tomar o 403 do Mercado Livre
         if not self.access_token:
             logger.error("[BUSCA] Abortando busca: Access Token ausente ou inválido.")
             return []
 
+        # Trocamos o parâmetro text 'q' pelo parâmetro de categoria oficial 'category'
         parametros = {
-            "q": termo_busca,
-            "limit": 50,          # quantos resultados pedir por chamada
+            "category": id_categoria,
+            "limit": 50,
             "sort": "relevance",
         }
 
         headers = {"Authorization": f"Bearer {self.access_token}"}
 
         resposta = requests.get(self.base_url, params=parametros, headers=headers, timeout=15)
-        resposta.raise_for_status()  # lança erro se a API retornar status != 200
+        resposta.raise_for_status()
         dados = resposta.json()
 
         ofertas = []
         for item in dados.get("results", []):
             preco_atual = item.get("price")
-            preco_original = item.get("original_price")  # None se não estiver em promoção
+            preco_original = item.get("original_price")
 
-            # Só nos interessam itens que de fato têm preço "de/por"
             if not preco_original or preco_original <= preco_atual:
                 continue
 
