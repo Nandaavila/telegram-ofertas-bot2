@@ -31,6 +31,10 @@ class MercadoLivreCollector(BaseCollector):
         self.client_secret = os.getenv("MERCADOLIVRE_CLIENT_SECRET")
         self.access_token = None
 
+        # ADICIONE APENAS ESTAS DUAS LINHAS ABAIXO PARA DETECTARMOS O ERRO:
+        print(f"[DEBUG] ID encontrado: {self.client_id is not None}")
+        print(f"[DEBUG] Secret encontrado: {self.client_secret is not None}")
+
     def _gerar_access_token(self):
         """Gera um token válido usando o fluxo de Client Credentials."""
         url = "https://api.mercadolibre.com/oauth/token"
