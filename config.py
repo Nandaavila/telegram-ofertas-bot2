@@ -152,7 +152,7 @@ COLUNAS_RELATORIO_ML = {
 HORARIOS_PUBLICACAO = os.getenv("HORARIOS_PUBLICACAO", "09:00,12:30,16:00,19:30,21:30,23:15,23:50").split(",")
 
 # Intervalo (em minutos) entre a busca de novas ofertas nos marketplaces
-INTERVALO_BUSCA_MINUTOS = 60
+INTERVALO_BUSCA_MINUTOS = 1
 
 # ---------------------------------------------------------------------
 # MODERAÇÃO

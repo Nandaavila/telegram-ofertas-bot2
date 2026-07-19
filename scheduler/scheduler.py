@@ -21,8 +21,7 @@ from processing.sincronizar_conversoes import tarefa_sincronizar_conversoes_shop
 
 
 def iniciar_agendador() -> AsyncIOScheduler:
-    fuso_recife = timezone(timedelta(hours=-3))
-    scheduler = AsyncIOScheduler(timezone=fuso_recife)
+    scheduler = AsyncIOScheduler() # Sem passar timezone aqui dentro, ele pega o TZ do sistema sozinho!
 
     # Tarefa de BUSCA: roda a cada N minutos (configurável em config.py)
     scheduler.add_job(
