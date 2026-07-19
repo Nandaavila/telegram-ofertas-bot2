@@ -149,7 +149,7 @@ COLUNAS_RELATORIO_ML = {
 # AGENDAMENTO
 # ---------------------------------------------------------------------
 # Horários em que o robô vai buscar e publicar ofertas (formato 24h).
-HORARIOS_PUBLICACAO = ["06:30", "09:00", "12:30", "16:00", "19:30", "21:00", "21:30", "22:45"]
+HORARIOS_PUBLICACAO = os.getenv("HORARIOS_PUBLICACAO", "09:00,12:30,16:00,19:30,21:30,23:15,23:30").split(",")
 
 # Intervalo (em minutos) entre a busca de novas ofertas nos marketplaces
 INTERVALO_BUSCA_MINUTOS = 60
