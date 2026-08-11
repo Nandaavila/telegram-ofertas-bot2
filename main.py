@@ -28,6 +28,21 @@ logging.basicConfig(
 
 async def main():
     logging.info("Iniciando automação do canal de ofertas...")
+
+    # Validação de configuração essencial: avisa LOGO DE CARA se faltar
+    # alguma variável de ambiente crítica, em vez de deixar o processo
+    # rodando por horas sem nunca publicar nada e sem nenhuma pista do
+    # motivo (o cenário que motivou esta correção).
+    problemas = config.validar_configuracao_essencial()
+    if problemas:
+        logging.warning("Configuração incompleta detectada no .env:")
+        for problema in problemas:
+            logging.warning(f"  - {problema}")
+        logging.warning(
+            "A automação vai continuar rodando, mas etapas relacionadas às variáveis "
+            "acima provavelmente vão falhar até que o .env seja corrigido."
+        )
+
     iniciar_agendador()
 
     # Mantém o processo vivo indefinidamente (o scheduler roda em background)

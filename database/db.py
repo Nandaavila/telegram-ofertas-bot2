@@ -11,11 +11,27 @@ import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import logging
 from contextlib import contextmanager
 from database.models import criar_engine_e_sessao, Produto, Publicacao, LogEvento
 import config
 
 engine, SessionLocal = criar_engine_e_sessao(config.DATABASE_URL)
+
+# Nível de log customizado "SUCCESS" (entre INFO e WARNING), usado para
+# destacar claramente no console/arquivo de log quando uma oferta é
+# publicada com sucesso no Telegram — conforme pedido: logs não devem ser
+# silenciosos nem ambíguos sobre o que deu certo e o que falhou.
+NIVEL_SUCCESS = 25
+if not hasattr(logging, "SUCCESS"):
+    logging.addLevelName(NIVEL_SUCCESS, "SUCCESS")
+    logging.SUCCESS = NIVEL_SUCCESS
+
+    def _log_success(self, mensagem, *args, **kwargs):
+        if self.isEnabledFor(NIVEL_SUCCESS):
+            self._log(NIVEL_SUCCESS, mensagem, args, **kwargs)
+
+    logging.Logger.success = _log_success
 
 
 @contextmanager

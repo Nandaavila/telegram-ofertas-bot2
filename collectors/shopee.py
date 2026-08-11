@@ -42,11 +42,14 @@ quanto para enviar.
 
 import hashlib
 import json
+import logging
 import time
 import requests
 from collectors.base_collector import BaseCollector
 from database.db import registrar_log
 import config
+
+logger = logging.getLogger(__name__)
 
 # A Shopee organiza por "keyword" (palavra-chave) na busca de ofertas,
 # não por um category_id fixo e simples de usar via productOfferV2.
@@ -71,6 +74,20 @@ class ShopeeCollector(BaseCollector):
         self.endpoint = "https://open-api.affiliate.shopee.com.br/graphql"
         self.app_id = config.SHOPEE_APP_ID
         self.app_secret = config.SHOPEE_APP_SECRET
+        # Credenciais ausentes é um cenário ESPERADO (nem todo mundo já foi
+        # aprovado no programa de afiliados da Shopee) — por isso não
+        # levantamos exceção aqui. Cada método público checa
+        # `self.credenciais_ok()` e retorna vazio/None com um log claro,
+        # em vez de deixar a requisição HMAC falhar de forma confusa lá na
+        # frente (assinatura calculada com app_id/secret vazios).
+        if not self.app_id or not self.app_secret:
+            logger.warning(
+                "[shopee] SHOPEE_APP_ID/SHOPEE_APP_SECRET não configurados no .env — "
+                "o coletor da Shopee ficará inativo até você configurar essas credenciais."
+            )
+
+    def credenciais_ok(self) -> bool:
+        return bool(self.app_id and self.app_secret)
 
     # -----------------------------------------------------------------
     # AUTENTICAÇÃO
@@ -145,6 +162,12 @@ class ShopeeCollector(BaseCollector):
         Busca ofertas por palavra-chave usando productOfferV2.
         Percorre algumas páginas (cada página traz até 50 itens).
         """
+        if not self.credenciais_ok():
+            # Não tenta a requisição — evita gastar uma chamada de rede
+            # (e um erro de assinatura confuso) quando já sabemos que as
+            # credenciais não estão configuradas.
+            return []
+
         termo_busca = MAPA_CATEGORIAS.get(categoria, categoria)
 
         query = """
@@ -254,6 +277,9 @@ class ShopeeCollector(BaseCollector):
         Isso é o que possibilita estatísticas de cliques REAIS por post,
         em vez de estimativas.
         """
+        if not self.credenciais_ok():
+            return None
+
         query = """
         mutation GerarLink($input: ShortLinkInput!) {
             generateShortLink(input: $input) {
@@ -293,6 +319,9 @@ class ShopeeCollector(BaseCollector):
         dizer) em vez de arriscar marcar uma oferta válida como expirada
         por um erro de compatibilidade de API.
         """
+        if not self.credenciais_ok():
+            return None
+
         try:
             _, item_id = id_externo.split("_", 1)
         except ValueError:

@@ -41,11 +41,14 @@ ML_MATT_TOOL = os.getenv("ML_MATT_TOOL", "")
 ML_AFFILIATE_TAG = os.getenv("ML_AFFILIATE_TAG", "")
 
 # ===============================================================
-# SHOPEE (AGUARDANDO LIBERAÇÃO DA API)
+# SHOPEE
 # ===============================================================
-# SHOPEE_APP_ID = os.getenv("SHOPEE_APP_ID")
-# SHOPEE_APP_SECRET = os.getenv("SHOPEE_APP_SECRET")
-# SHOPEE_AFFILIATE_TAG = os.getenv("SHOPEE_AFFILIATE_TAG")
+# Credenciais da Shopee Affiliate Open API (affiliate.shopee.com.br).
+# Se ficarem vazias, o ShopeeCollector detecta isso e pula a busca com um
+# aviso claro no log, em vez de travar com um erro de atributo ausente.
+SHOPEE_APP_ID = os.getenv("SHOPEE_APP_ID", "")
+SHOPEE_APP_SECRET = os.getenv("SHOPEE_APP_SECRET", "")
+SHOPEE_AFFILIATE_TAG = os.getenv("SHOPEE_AFFILIATE_TAG", "")
 
 # ===============================================================
 # AMAZON (AGUARDANDO LIBERAÇÃO DA API)
@@ -53,6 +56,13 @@ ML_AFFILIATE_TAG = os.getenv("ML_AFFILIATE_TAG", "")
 # AMAZON_ACCESS_KEY = os.getenv("AMAZON_ACCESS_KEY")
 # AMAZON_SECRET_KEY = os.getenv("AMAZON_SECRET_KEY")
 # AMAZON_AFFILIATE_TAG = os.getenv("AMAZON_AFFILIATE_TAG")
+
+# Dicionário usado por collectors/amazon.py. Mantido definido mesmo com a
+# Amazon desativada no pipeline, para não deixar um AttributeError latente
+# caso o collector seja reativado no futuro (config.AFFILIATE_TAGS.get(...)).
+AFFILIATE_TAGS = {
+    "amazon": os.getenv("AMAZON_AFFILIATE_TAG", ""),
+}
 
 # ===============================================================
 # MAGALU (AGUARDANDO LIBERAÇÃO DA API)
@@ -139,3 +149,39 @@ REQUER_APROVACAO_MANUAL = os.getenv("REQUER_APROVACAO_MANUAL", "false").lower() 
 # ===============================================================
 LOG_DIR = os.getenv("LOG_DIR", "logs")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO")
+
+
+# ===============================================================
+# VALIDAÇÃO DE CONFIGURAÇÃO ESSENCIAL
+# ===============================================================
+def validar_configuracao_essencial() -> list[str]:
+    """
+    Verifica se as variáveis de ambiente indispensáveis para a automação
+    funcionar estão presentes. Retorna uma lista de problemas encontrados
+    (vazia se estiver tudo certo).
+
+    Isso é chamado no início de main.py e do modo de teste manual, para
+    que um .env incompleto gere um erro CLARO e imediato no log, em vez
+    de o processo ficar rodando "de boa" por horas sem nunca publicar
+    nada (e sem nenhuma pista do motivo).
+    """
+    problemas = []
+
+    if not TELEGRAM_BOT_TOKEN:
+        problemas.append("TELEGRAM_BOT_TOKEN não está definido no .env (obtenha com o @BotFather).")
+    if not TELEGRAM_CHANNEL_ID:
+        problemas.append("TELEGRAM_CHANNEL_ID não está definido no .env (ID do canal, ex: -1001234567890).")
+    if not ANTHROPIC_API_KEY:
+        problemas.append("ANTHROPIC_API_KEY não está definido no .env (necessário para gerar o texto da oferta).")
+    if not MERCADOLIVRE_CLIENT_ID or not MERCADOLIVRE_CLIENT_SECRET:
+        problemas.append(
+            "MERCADOLIVRE_CLIENT_ID/MERCADOLIVRE_CLIENT_SECRET ausentes — o coletor do "
+            "Mercado Livre não vai conseguir gerar um Access Token e retornará 0 ofertas."
+        )
+    if not SHOPEE_APP_ID or not SHOPEE_APP_SECRET:
+        problemas.append(
+            "SHOPEE_APP_ID/SHOPEE_APP_SECRET ausentes — o coletor da Shopee será pulado "
+            "(isso é esperado se você ainda não tem aprovação no programa de afiliados)."
+        )
+
+    return problemas

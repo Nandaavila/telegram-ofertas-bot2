@@ -1,4 +1,24 @@
-# main.py
+"""
+⚠️  ARQUIVO LEGADO / NÃO USADO PELA AUTOMAÇÃO ATUAL  ⚠️
+==========================================================
+Este arquivo é um protótipo anterior do bot (lê produtos de uma planilha
+Google Sheets pública em CSV, em vez de Shopee/Mercado Livre via API).
+Ele usa nomes de variável de ambiente DIFERENTES do resto do projeto
+(TELEGRAM_TOKEN/CHAT_ID/SHEET_CSV_URL, em vez de TELEGRAM_BOT_TOKEN/
+TELEGRAM_CHANNEL_ID definidos em config.py) e NÃO é referenciado em
+nenhum lugar da automação atual — o Dockerfile roda "python main.py",
+não "python BOT.py".
+
+Ele foi mantido no repositório (não removido) para não apagar histórico/
+funcionalidade que talvez você ainda use separadamente, mas rodá-lo por
+engano no lugar de main.py vai falhar (SystemExit) por falta dessas
+variáveis de ambiente específicas, e mesmo se configurado, ele NÃO
+publica ofertas da Shopee/Mercado Livre coletadas automaticamente — ele
+publica o que estiver na planilha do Google Sheets.
+
+Se você não usa mais esse fluxo baseado em planilha, o mais seguro é
+apagar este arquivo do repositório para evitar confusão futura.
+"""
 import asyncio
 import datetime
 from io import StringIO

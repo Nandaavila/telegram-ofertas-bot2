@@ -15,6 +15,7 @@ independentemente da frequência de coleta.
 
 import asyncio
 from datetime import datetime, timedelta
+from telegram.error import TelegramError
 from database.db import get_session, produto_ja_existe, salvar_produto, registrar_log
 from database.models import Produto, Publicacao
 from processing.filters import oferta_vale_a_pena, calcular_metricas_desconto, categoria_esta_ativa
@@ -28,9 +29,16 @@ import os
 
 # Lista de coletores ativos. Adicionar um novo marketplace = adicionar
 # uma linha aqui (depois de implementar a classe collector correspondente).
+#
+# CORREÇÃO: a Shopee estava desativada aqui (commit "temp: desativa Shopee,
+# foco em Mercado Livre por enquanto") e nunca foi reativada — por isso
+# nenhuma oferta da Shopee era buscada. Reativamos o coletor; se
+# SHOPEE_APP_ID/SHOPEE_APP_SECRET não estiverem configurados no .env, o
+# próprio ShopeeCollector detecta isso e simplesmente não retorna ofertas
+# (ver collectors/shopee.py), sem quebrar o restante do pipeline.
 COLETORES = [
     MercadoLivreCollector(),
-    # ShopeeCollector(),
+    ShopeeCollector(),
     # AmazonCollector(),
     # FeedAfiliadosCollector(nome_marketplace="magalu", feed_url="..."),
 ]
@@ -41,6 +49,11 @@ def tarefa_buscar_ofertas():
     Passo 1: percorre cada coletor ativo e cada categoria habilitada,
     filtra o que vale a pena, e salva no banco como status='novo'.
     """
+    registrar_log("INFO", "pipeline", "Iniciando busca de ofertas...")
+
+    total_por_marketplace: dict[str, int] = {c.nome_marketplace: 0 for c in COLETORES}
+    total_aprovados = 0
+
     for collector in COLETORES:
         for categoria, ativa in config.CATEGORIAS_ATIVAS.items():
             if not ativa:
@@ -48,9 +61,18 @@ def tarefa_buscar_ofertas():
             try:
                 ofertas_brutas = collector.buscar_ofertas(categoria)
             except Exception as e:
-                registrar_log("ERROR", f"collector.{collector.nome_marketplace}", str(e))
+                # Log completo (não silencioso): guarda o tipo da exceção e
+                # a mensagem, para diferenciar erro de rede, erro de auth,
+                # resposta inesperada da API, etc.
+                registrar_log(
+                    "ERROR", f"collector.{collector.nome_marketplace}",
+                    f"Falha ao buscar ofertas em '{categoria}': {type(e).__name__}: {e}",
+                )
                 continue
 
+            total_por_marketplace[collector.nome_marketplace] += len(ofertas_brutas)
+
+            aprovados_nesta_categoria = 0
             with get_session() as session:
                 for oferta in ofertas_brutas:
                     # 1) evita duplicados
@@ -65,8 +87,19 @@ def tarefa_buscar_ofertas():
                     oferta["status"] = "pendente_aprovacao" if config.REQUER_APROVACAO_MANUAL else "aprovado"
 
                     salvar_produto(session, oferta)
+                    aprovados_nesta_categoria += 1
 
-            registrar_log("INFO", "pipeline", f"{len(ofertas_brutas)} ofertas avaliadas em '{categoria}' ({collector.nome_marketplace})")
+            total_aprovados += aprovados_nesta_categoria
+            registrar_log(
+                "INFO", "pipeline",
+                f"{collector.nome_marketplace}: {len(ofertas_brutas)} ofertas encontradas em '{categoria}', "
+                f"{aprovados_nesta_categoria} aprovadas após filtros.",
+            )
+
+    for marketplace, total in total_por_marketplace.items():
+        registrar_log("INFO", "pipeline", f"{marketplace}: {total} ofertas encontradas no total.")
+
+    registrar_log("INFO", "pipeline", f"{total_aprovados} produtos aprovados após filtros nesta rodada de busca.")
 
 
 def _buscar_candidato_repostagem(session, collectors_por_marketplace: dict) -> Produto | None:
@@ -200,7 +233,26 @@ async def tarefa_publicar_oferta():
             "url_afiliado": link_final,  # usa o link rastreado quando disponível
         }
 
-        texto = gerar_texto_oferta(produto_dict)
+        registrar_log("INFO", "pipeline", "Preparando publicação...")
+
+        try:
+            texto = gerar_texto_oferta(produto_dict)
+        except Exception as e:
+            # CORREÇÃO: antes, uma falha aqui (ex: ANTHROPIC_API_KEY ausente
+            # ou inválida) subia sem tratamento até o executor do
+            # APScheduler — o job era abortado e o erro só aparecia no log
+            # interno do agendador, não no sistema de log da aplicação
+            # (registrar_log/tabela LogEvento), e por isso nunca aparecia
+            # no painel admin nem era fácil de encontrar. Agora o erro é
+            # sempre registrado de forma explícita, com o tipo da exceção
+            # e a mensagem original da API.
+            registrar_log(
+                "ERROR", "pipeline",
+                f"Falha ao gerar texto da oferta (produto {produto.id}) via Anthropic: "
+                f"{type(e).__name__}: {e}",
+            )
+            return
+
         if veio_de_repostagem:
             # Deixamos claro para quem já viu esse produto antes que a
             # oferta continua de pé — isso é mais transparente do que
@@ -223,8 +275,32 @@ async def tarefa_publicar_oferta():
             registrar_log("WARNING", "pipeline", f"Falha ao gerar card promocional do produto {produto.id}: {e}")
             imagem_final = produto.url_imagem  # fallback: foto crua do marketplace
 
-        publisher = TelegramPublisher()
-        message_id = await publisher.publicar_oferta(texto, imagem_final)
+        registrar_log("INFO", "pipeline", f"Enviando oferta para o Telegram (produto {produto.id})...")
+
+        try:
+            publisher = TelegramPublisher()
+            message_id = await publisher.publicar_oferta(texto, imagem_final)
+        except TelegramError as e:
+            # CORREÇÃO: antes, um erro do Telegram (token inválido, bot sem
+            # permissão de admin no canal, chat_id incorreto, etc.) subia
+            # sem tratamento e o job inteiro era abortado silenciosamente
+            # do ponto de vista da aplicação. Agora capturamos
+            # especificamente TelegramError e logamos os detalhes que a
+            # biblioteca python-telegram-bot expõe (código/mensagem
+            # retornados pela API do Telegram), no formato pedido:
+            # [ERROR] Falha ao publicar no Telegram / [ERROR] Resposta da API: ...
+            registrar_log("ERROR", "pipeline", "Falha ao publicar no Telegram")
+            registrar_log(
+                "ERROR", "pipeline",
+                f"Tipo do erro: {type(e).__name__} | Resposta da API: {e.message if hasattr(e, 'message') else e}",
+            )
+            return
+        except Exception as e:
+            registrar_log(
+                "ERROR", "pipeline",
+                f"Falha inesperada ao publicar no Telegram (produto {produto.id}): {type(e).__name__}: {e}",
+            )
+            return
 
         produto.status = "publicado"
         produto.publicado_em = agora
@@ -238,4 +314,13 @@ async def tarefa_publicar_oferta():
         ))
 
         acao = "repostado" if veio_de_repostagem else "publicado"
-        registrar_log("INFO", "pipeline", f"Produto '{produto.titulo}' {acao} com sucesso (vezes_publicado={produto.vezes_publicado}).")
+        # "SUCCESS" é um nível de log customizado registrado em
+        # database/db.py (entre INFO e WARNING), para destacar claramente
+        # no console/arquivo de log e na tabela LogEvento quando uma
+        # oferta é publicada com sucesso — em vez de se misturar com as
+        # demais mensagens [INFO].
+        registrar_log(
+            "SUCCESS", "pipeline",
+            f"Oferta publicada no canal — produto '{produto.titulo}' {acao} com sucesso "
+            f"(vezes_publicado={produto.vezes_publicado}, message_id={message_id}).",
+        )

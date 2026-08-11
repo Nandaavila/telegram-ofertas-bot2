@@ -98,6 +98,16 @@ def tarefa_sincronizar_conversoes_shopee():
     Publicacao correspondente.
     """
     collector = ShopeeCollector()
+    if not collector.credenciais_ok():
+        # Antes, isso quebrava com AttributeError (config.SHOPEE_APP_ID
+        # não existia). Agora a variável existe (mesmo que vazia) e este
+        # guard evita rodar o job inteiro sem credenciais configuradas.
+        registrar_log(
+            "INFO", "sincronizacao_conversoes",
+            "SHOPEE_APP_ID/SHOPEE_APP_SECRET não configurados — sincronização pulada.",
+        )
+        return
+
     dias_retroativos = config.SINCRONIZACAO_CONVERSOES_DIAS_RETROATIVOS
 
     conversoes = _buscar_todas_conversoes(collector, dias_retroativos)

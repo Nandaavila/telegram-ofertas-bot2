@@ -90,6 +90,7 @@ class MercadoLivreCollector(BaseCollector):
             return []
 
         ofertas = []
+        total_sem_desconto_real = 0
         for item in dados.get("results", []):
             try:
                 # Filtragem inteligente de estoque e status
@@ -100,9 +101,21 @@ class MercadoLivreCollector(BaseCollector):
                 # A API de categoria traz o preço original de/por nativamente estruturado
                 preco_original = item.get("original_price") or item.get("base_price")
 
-                # Se o anúncio não expõe preço antigo, geramos a margem base dinâmica para o pipeline
+                # IMPORTANTE (correção de bug): antes, quando o anúncio não
+                # trazia um preço "de" real, o código INVENTAVA um preço
+                # 30% maior (preco_atual * 1.30). Isso é matematicamente
+                # ~23% de desconto (0.30 / 1.30), que é SEMPRE menor que o
+                # DESCONTO_MINIMO_PERCENTUAL padrão (30%) — ou seja, o
+                # filtro de processing/filters.py reprovava essa oferta
+                # quase sempre, e ainda por cima ela seria um desconto
+                # falso caso passasse. Um anúncio comum de catálogo não é
+                # necessariamente uma "oferta": sem um preço original real
+                # informado pela API, não temos como saber se há desconto
+                # de verdade. Por isso, agora simplesmente pulamos o item
+                # em vez de fabricar um preço/desconto que não existe.
                 if not preco_original or preco_original <= preco_atual:
-                    preco_original = round(preco_atual * 1.30, 2)
+                    total_sem_desconto_real += 1
+                    continue
 
                 url_produto = item.get("permalink")
                 ofertas.append({
@@ -122,7 +135,10 @@ class MercadoLivreCollector(BaseCollector):
             except Exception:
                 continue
 
-        logger.info(f"[AUTO-API] Concluído. {len(ofertas)} ofertas mineradas automaticamente em '{categoria}'.")
+        logger.info(
+            f"[AUTO-API] Concluído. {len(ofertas)} ofertas com desconto real mineradas em '{categoria}' "
+            f"({total_sem_desconto_real} itens ignorados por não terem preço original informado pela API)."
+        )
         return ofertas
 
     def montar_link_afiliado(self, url_produto: str, tag_afiliado: str) -> str:
